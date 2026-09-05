@@ -7,6 +7,7 @@ import {
   erc20Abi,
   type Address,
 } from "viem";
+import { mainnet } from "viem/chains";
 import { CHAINS, type ChainConfig } from "./chains";
 import { TOKENS } from "./tokens";
 import { getPrices, type PriceMap } from "./prices";
@@ -70,14 +71,41 @@ export interface PortfolioSnapshot {
 export const DEMO_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 
 export async function getPortfolio(address: string): Promise<PortfolioSnapshot> {
-  if (!isAddress(address)) {
-    throw new Error(`无效的地址: ${address}`);
-  }
-  const normalized = getAddress(address);
-
+  const normalized = await resolveAddress(address);
   return cached(`portfolio:${normalized}`, TTL.portfolio, () =>
     buildPortfolio(normalized),
   );
+}
+
+/**
+ * 解析用户输入的地址：
+ * - 0x... 直接返回 checksum 形式
+ * - xxx.eth 通过 ENS 反解析（缓存 5 分钟）
+ * - 其他格式抛错
+ */
+async function resolveAddress(input: string): Promise<Address> {
+  const trimmed = input.trim();
+  if (isAddress(trimmed)) return getAddress(trimmed);
+  if (trimmed.toLowerCase().endsWith(".eth")) {
+    return cached(
+      `ens:${trimmed.toLowerCase()}`,
+      5 * 60_000,
+      async () => {
+        const ethCfg = CHAINS.find((c) => c.key === "ethereum");
+        if (!ethCfg) throw new Error("Ethereum 链未配置");
+        const client = createPublicClient({
+          chain: mainnet,
+          transport: http(ethCfg.rpcUrl),
+        });
+        const resolved = await client.getEnsAddress({
+          name: trimmed,
+        });
+        if (!resolved) throw new Error(`ENS 解析失败: ${trimmed}`);
+        return resolved;
+      },
+    );
+  }
+  throw new Error(`无效的地址或 ENS 名: ${input}`);
 }
 
 async function buildPortfolio(

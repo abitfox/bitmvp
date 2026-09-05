@@ -166,8 +166,8 @@ export const MODULES: ModuleMeta[] = [
     desc: "不是又一个聊天框。Copilot 通过 MCP 真实调用前面三个模块的能力——查资产、比价格、找信号——把自然语言翻译成可执行的工具链，并把每一步的依据展示出来。",
     color: "copilot",
     hex: "#7C5CFF",
-    status: "planned",
-    statusText: "规划中",
+    status: "live",
+    statusText: "已上线",
     features: [
       {
         title: "真实工具调用",
