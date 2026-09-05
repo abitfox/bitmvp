@@ -35,6 +35,20 @@
 # WorkBuddy workspace metadata (do not commit)
 **/.workbuddy/
 
+# Internal planning docs — keep local, never publish
+# (这些是规划/内部资料，不应同步到公开仓库)
+01_Demo路线规划.md
+02_BitMVP产品架构设计.md
+04_数据层选型分析.md
+05_部署选型_海外免费与低价方案.md
+
+# Internal planning / roadmap docs (never publish)
+# These are product-internal documents that shouldn't be on the public repo.
+**/01_Demo*.md
+**/02_BitMVP*架构*.md
+**/04_数据层选型分析.md
+**/05_部署选型*.md
+
 # Vercel
 **/.vercel/
 

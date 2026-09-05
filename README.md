@@ -37,21 +37,20 @@ npm run start -- -p 3100
 
 ```
 web3-wallet-demo/
-├── 01_Demo路线规划.md
-├── 02_BitMVP产品架构设计.md
-├── 03_品牌视觉与设计系统规范.md
-├── 04_数据层选型分析.md
-├── 05_部署选型_海外免费与低价方案.md
-└── site/                  # Next.js app
+├── README.md                  ← this file
+├── 03_品牌视觉与设计系统规范.md  ← public design tokens reference
+└── site/                       ← Next.js app (the deployable surface)
     ├── app/
-    │   ├── api/           # /api/portfolio /api/swap /api/radar
-    │   ├── portfolio/ swap/ radar/ copilot/  # module pages
+    │   ├── api/                ← /api/portfolio /api/swap /api/radar
+    │   ├── portfolio/ swap/ radar/ copilot/   ← module pages
     │   ├── layout.tsx · page.tsx
     ├── components/
     ├── lib/chain/
     ├── public/
     └── ...
 ```
+
+> Internal planning docs (`01_*`, `02_*`, `04_*`, `05_*`) live locally and are not synced to this repo.
 
 ## License
 
