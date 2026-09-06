@@ -71,7 +71,8 @@ export function SwapPanel() {
   };
 
   const handleSwap = async () => {
-    if (!isConnected || !quote || !fromToken || !chain?.uniswapRouter) return;
+    const routerAddress = chain?.uniswapRouter ?? chain?.uniswapUniversalRouter;
+    if (!isConnected || !quote || !fromToken || !routerAddress) return;
 
     const amountIn = parseUnits(
       quote.fromAmount.toString(),
@@ -89,12 +90,12 @@ export function SwapPanel() {
       tokenInAddress: fromToken.address,
       tokenOutAddress:
         toToken?.address === "0x0000000000000000000000000000000000000000"
-          ? chain.wNativeAddress
+          ? chain?.wNativeAddress ?? "0x0000000000000000000000000000000000000000"
           : toToken!.address,
       feeTier: quote.feeTier ?? 500,
       amountIn,
       amountOutMinimum,
-      routerAddress: chain.uniswapRouter,
+      routerAddress: routerAddress as `0x${string}`,
     });
   };
 

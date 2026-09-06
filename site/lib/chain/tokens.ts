@@ -244,6 +244,29 @@ export const TOKENS: TokenList = {
       coingeckoId: "pancakeswap-token",
     },
   ],
+  sepolia: [
+    {
+      address: "0x0000000000000000000000000000000000000000",
+      symbol: "ETH",
+      name: "Sepolia 测试网原生代币",
+      decimals: 18,
+      coingeckoId: "ethereum",
+    },
+    {
+      address: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+      symbol: "WETH",
+      name: "Wrapped Ether (Sepolia)",
+      decimals: 18,
+      coingeckoId: "weth",
+    },
+    {
+      address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      symbol: "USDC",
+      name: "USD Coin (Sepolia, Circle 官方测试币)",
+      decimals: 6,
+      coingeckoId: "usd-coin",
+    },
+  ],
 };
 
 /** 稳定币：价格 API 挂掉时兜底按 1 美元算 */

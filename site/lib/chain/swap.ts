@@ -49,6 +49,54 @@ export interface SwapParams {
   slippageBps?: number; // 基点，100 = 1%
 }
 
+/** Uniswap V3 Factory.getPool 的最小 ABI（fallback 报价用） */
+const FACTORY_ABI = [
+  {
+    type: "function" as const,
+    name: "getPool" as const,
+    stateMutability: "view" as const,
+    inputs: [
+      { type: "address" as const, name: "tokenA" as const },
+      { type: "address" as const, name: "tokenB" as const },
+      { type: "uint24" as const, name: "fee" as const },
+    ],
+    outputs: [{ type: "address" as const, name: "pool" as const }],
+  },
+] as const;
+
+/** Uniswap V3 Pool 的最小 ABI（读 slot0 拿即时价格） */
+const POOL_ABI = [
+  {
+    type: "function" as const,
+    name: "slot0" as const,
+    stateMutability: "view" as const,
+    inputs: [],
+    outputs: [
+      { type: "uint160" as const, name: "sqrtPriceX96" as const },
+      { type: "int24" as const, name: "tick" as const },
+      { type: "uint16" as const, name: "observationIndex" as const },
+      { type: "uint16" as const, name: "observationCardinality" as const },
+      { type: "uint16" as const, name: "observationCardinalityNext" as const },
+      { type: "uint8" as const, name: "feeProtocol" as const },
+      { type: "bool" as const, name: "unlocked" as const },
+    ],
+  },
+  {
+    type: "function" as const,
+    name: "token0" as const,
+    stateMutability: "view" as const,
+    inputs: [],
+    outputs: [{ type: "address" as const, name: "" as const }],
+  },
+  {
+    type: "function" as const,
+    name: "liquidity" as const,
+    stateMutability: "view" as const,
+    inputs: [],
+    outputs: [{ type: "uint128" as const, name: "" as const }],
+  },
+] as const;
+
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 
 /** QuoterV2.quoteExactInputSingle 的最小 ABI */
@@ -132,7 +180,25 @@ export async function getSwapQuote(
         slippageBps,
       );
     } catch (error) {
-      console.warn("链上报价失败，回退到模拟报价:", error);
+      console.warn("链上报价失败，尝试 Pool 现货价 fallback:", error);
+    }
+  }
+
+  // 没有 QuoterV2（如 Sepolia）或 Quoter 调用失败时，
+  // 直接从 V3 池子的 slot0 读即时价格自己算。
+  if (chain.uniswapFactory) {
+    try {
+      return await getPoolSpotQuote(
+        chain,
+        fromToken,
+        toToken,
+        fromForQuote,
+        toForQuote,
+        params.fromAmount,
+        slippageBps,
+      );
+    } catch (error) {
+      console.warn("Pool 现货价 fallback 也失败:", error);
     }
   }
 
@@ -258,6 +324,130 @@ async function getUniswapQuote(
       isSimulated: false,
       feeTier: best.fee,
     };
+  });
+}
+
+/**
+ * Fallback 报价：直接从 Uniswap V3 池子读 slot0 的 sqrtPriceX96 自算价格。
+ *
+ * 适用两类场景：
+ * 1. 链上没部署 QuoterV2（Sepolia 等测试网只有 Factory + UniversalRouter）
+ * 2. QuoterV2 调用失败（RPC 限流、合约异常）——主网也能降级
+ *
+ * 与 QuoterV2 的差别：Quoter 会真实模拟 swap 路径（含 tick 穿越），
+ * 这里只按当前现货价线性外推，**不含价格影响**，所以对大额交易偏乐观。
+ * 因此用它时 priceImpact 标记为估算值，并在 route 字段注明来源。
+ */
+async function getPoolSpotQuote(
+  chain: ChainConfig,
+  fromTokenOriginal: TokenMeta,
+  toTokenOriginal: TokenMeta,
+  fromToken: TokenMeta,
+  toToken: TokenMeta,
+  fromAmount: number,
+  slippageBps: number,
+): Promise<SwapQuote> {
+  const cacheKey = `poolspot:${chain.key}:${fromToken.symbol}:${toToken.symbol}:${fromAmount}`;
+
+  return cached(cacheKey, TTL.swap, async () => {
+    const publicClient = createPublicClient({
+      chain: chain.chain,
+      transport: http(chain.rpcUrl),
+    });
+
+    const feeTiers = [500, 3000, 100, 10000];
+    const Q96 = 2n ** 96n;
+
+    for (const fee of feeTiers) {
+      try {
+        const pool = (await publicClient.readContract({
+          address: chain.uniswapFactory!,
+          abi: FACTORY_ABI,
+          functionName: "getPool",
+          args: [
+            fromToken.address as Address,
+            toToken.address as Address,
+            fee,
+          ],
+        })) as Address;
+
+        if (
+          !pool ||
+          pool === "0x0000000000000000000000000000000000000000"
+        ) {
+          continue; // 该 fee tier 没有池子
+        }
+
+        const [slot0, token0, liquidity] = await Promise.all([
+          publicClient.readContract({
+            address: pool,
+            abi: POOL_ABI,
+            functionName: "slot0",
+          }) as Promise<readonly [bigint, number, number, number, number, number, boolean]>,
+          publicClient.readContract({
+            address: pool,
+            abi: POOL_ABI,
+            functionName: "token0",
+          }) as Promise<Address>,
+          publicClient.readContract({
+            address: pool,
+            abi: POOL_ABI,
+            functionName: "liquidity",
+          }) as Promise<bigint>,
+        ]);
+
+        const sqrtPriceX96 = slot0[0];
+        if (sqrtPriceX96 === 0n || liquidity === 0n) continue;
+
+        // price = (sqrtPriceX96 / 2^96)^2，表示「1 raw token0 值多少 raw token1」
+        // 用 BigInt 先乘再除，避免 Number 在大数平方时丢精度
+        const priceNum =
+          Number((sqrtPriceX96 * sqrtPriceX96) / (Q96 * Q96)) +
+          Number(((sqrtPriceX96 * sqrtPriceX96) % (Q96 * Q96))) /
+            Number(Q96 * Q96);
+
+        const isFromToken0 =
+          fromToken.address.toLowerCase() === token0.toLowerCase();
+
+        // raw 单位换算成 human 单位：out_human = in_human * price * 10^(decIn - decOut)
+        const decimalAdjust = Math.pow(
+          10,
+          fromToken.decimals - toToken.decimals,
+        );
+        const rawPrice = isFromToken0 ? priceNum : 1 / priceNum;
+        const feeMultiplier = 1 - fee / 1_000_000; // fee 单位是百万分之一
+
+        const toAmount =
+          fromAmount * rawPrice * decimalAdjust * feeMultiplier;
+        if (!Number.isFinite(toAmount) || toAmount <= 0) continue;
+
+        const price = toAmount / fromAmount;
+        const gasCostNative = 0.0002; // 测试网/降级场景给个保守估算
+
+        return {
+          fromToken: toTokenInfo(fromTokenOriginal, chain),
+          toToken: toTokenInfo(toTokenOriginal, chain),
+          fromAmount,
+          toAmount,
+          minOutput: toAmount * (1 - slippageBps / 10000),
+          price,
+          inversePrice: 1 / price,
+          gasCostNative,
+          gasCostUsd: 0,
+          priceImpact: 0,
+          route: `Uniswap V3 现货价（Pool slot0）· fee ${(fee / 10000).toFixed(2)}%`,
+          estimatedTime: 15,
+          isSimulated: false,
+          feeTier: fee,
+        };
+      } catch {
+        continue; // 该 fee tier 读失败，试下一个
+      }
+    }
+
+    throw new Error(
+      `该代币对（${fromToken.symbol}/${toToken.symbol}）在此链上找不到可用的 V3 池子`,
+    );
   });
 }
 
